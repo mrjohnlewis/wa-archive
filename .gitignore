@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# never commit real data
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+spike-*.json

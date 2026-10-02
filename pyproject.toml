@@ -1,0 +1,29 @@
+[project]
+name = "wa-archive"
+version = "0.1.0"
+description = "Incremental, never-forgetting WhatsApp archive from encrypted iPhone backups"
+readme = "README.md"
+authors = [
+    { name = "John Lewis" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "iphone-backup-decrypt>=0.11.2",
+    "keyring>=25.7.0",
+    "rich>=15.0.0",
+]
+
+[project.scripts]
+wa-archive = "wa_archive:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+crosscheck = [
+    "whatsapp-chat-exporter>=0.13.0",
+]
+dev = [
+    "pytest>=9.1.1",
+]
