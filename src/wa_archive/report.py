@@ -77,23 +77,33 @@ def chat_names(con) -> dict[int, str]:
     return out
 
 
-def pending_uploads(store: Store, con, cloud) -> list[Path]:
+def upload_candidates(store: Store, con) -> list[Path]:
     blobs = BlobStore(store.paths.archive_dir)
-    paths = [store.archive_db, store.archive_json]
-    paths += [blobs.path(r["sha256"], r["ext"]) for r in con.execute("SELECT sha256, ext FROM blobs")]
-    return [p for p in paths if cloud.state(p) == CloudState.PENDING]
+    return [store.archive_db, store.archive_json] + [
+        blobs.path(r["sha256"], r["ext"]) for r in con.execute("SELECT sha256, ext FROM blobs")]
 
 
-def wait_for_uploads(store: Store, con, cloud, timeout: float, poll: float = 15, say=print) -> bool:
+def wait_for_uploads(store: Store, con, cloud, timeout: float, poll: float = 15, say=print,
+                     scanned=None) -> bool:
+    """Wait until no archive file is still uploading. The first pass checks every file (slow in
+    iCloud Drive: each lookup goes through the file-provider daemon); later passes re-check only
+    the files that were still pending."""
     deadline = time.monotonic() + timeout
-    while True:
-        pending = pending_uploads(store, con, cloud)
-        if not pending:
-            return True
+    files = upload_candidates(store, con)
+    pending = []
+    for i, p in enumerate(files, 1):
+        if cloud.state(p) == CloudState.PENDING:
+            pending.append(p)
+        if scanned:
+            scanned(i, len(files))
+    total = len(pending)
+    while pending:
+        say(f"Waiting for iCloud: {len(pending):,} of {total:,} file(s) still uploading...")
         if time.monotonic() > deadline:
             return False
-        say(f"Waiting for iCloud: {len(pending)} file(s) still uploading...")
         time.sleep(poll)
+        pending = [p for p in pending if cloud.state(p) == CloudState.PENDING]
+    return True
 
 
 def build_report(paths: Paths, cloud, *, quick: bool = False, max_age_hours: float = 6,
@@ -139,13 +149,13 @@ def build_report(paths: Paths, cloud, *, quick: bool = False, max_age_hours: flo
         rows = con.execute("SELECT sha256, ext, size, verified_run FROM blobs").fetchall()
         hashed = 0
         for i, b in enumerate(rows):
+            if progress and i % 200 == 0:
+                progress(i, len(rows))
             path = blobs.path(b["sha256"], b["ext"])
             st = cloud.state(path)
             if st == CloudState.MISSING:
                 blob_state[b["sha256"]] = "missing blob"
             elif st.local and not quick:
-                if progress and i % 500 == 0:
-                    progress(i, len(rows))
                 ok = sha256_file(path) == b["sha256"]
                 hashed += 1
                 blob_state[b["sha256"]] = ("pending upload" if st == CloudState.PENDING else

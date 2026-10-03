@@ -184,13 +184,17 @@ def _build_report(args, paths, cloud) -> dict:
         store.sync()
         con = store.open()
         try:
-            ok = wait_for_uploads(store, con, cloud, args.wait_upload * 3600, say=lambda m: console.print(escape(m)))
+            with Progress(console=console, transient=True) as prog:
+                task = prog.add_task("Checking iCloud upload status", total=None)
+                scanned = lambda i, n: prog.update(task, completed=i, total=n)  # noqa: E731
+                ok = wait_for_uploads(store, con, cloud, args.wait_upload * 3600, scanned=scanned,
+                                      say=lambda m: prog.update(task, description=escape(m)))
         finally:
             con.close()
         if not ok:
             console.print("[yellow]Uploads still pending after waiting; the report will show them.[/]")
     with Progress(console=console, transient=True) as prog:
-        task = prog.add_task("Re-hashing archived media", total=None)
+        task = prog.add_task("Checking and re-hashing archived media", total=None)
         return build_report(paths, cloud, quick=args.quick, max_age_hours=args.max_age_hours,
                             progress=lambda i, n: prog.update(task, completed=i, total=n))
 

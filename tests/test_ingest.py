@@ -523,3 +523,26 @@ def test_evict_command_only_touches_verified_uploaded(env):
     n, _ = evict_uploaded(env.paths, env.cloud)
     assert n == len(rows) - 2
     assert blobs.path(*rows[0]) not in env.cloud.evicted and blobs.path(*rows[1]) not in env.cloud.evicted
+
+
+def test_wait_for_uploads_rechecks_only_pending(env):
+    from wa_archive.report import wait_for_uploads
+    fx = basic_fixture()
+    ingest(env, fx)
+    store = Store(env.paths, env.cloud)
+    con = store.open()
+    blobs = BlobStore(env.paths.archive_dir)
+    target = blobs.path(*con.execute("SELECT sha256, ext FROM blobs").fetchone())
+    env.cloud.states[target] = CloudState.PENDING
+    checks, msgs = [], []
+    real_state = env.cloud.state
+    env.cloud.state = lambda p: (checks.append(p), real_state(p))[1]
+
+    def say(m):
+        msgs.append(m)
+        env.cloud.states[target] = CloudState.SYNCED  # upload finishes during the wait
+    n_files = len(checks)
+    assert wait_for_uploads(store, con, env.cloud, timeout=60, poll=0, say=say)
+    assert msgs == ["Waiting for iCloud: 1 of 1 file(s) still uploading..."]
+    first_pass = one(con, "SELECT count(*) FROM blobs") + 2
+    assert len(checks) - n_files == first_pass + 1  # one full pass, then only the pending file
