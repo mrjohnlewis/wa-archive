@@ -156,9 +156,64 @@ def chat_db_report(con, shared: dict[str, int]) -> dict:
     if s.has("ZWAMEDIAITEM", "ZMETADATA"):
         r["media_metadata_shapes"] = blob_census(con, "SELECT ZMETADATA FROM ZWAMEDIAITEM WHERE ZMETADATA IS NOT NULL")
         r["quotes"] = quote_resolution(con)
+    r["probes"] = probes(con, s, shared)
     if s.has("ZWAMESSAGEINFO", "ZRECEIPTINFO"):
         r["receipt_info_shapes"] = blob_census(con, "SELECT ZRECEIPTINFO FROM ZWAMESSAGEINFO WHERE ZRECEIPTINFO IS NOT NULL")
     return r
+
+
+def _suffix(jid: str | None) -> str:
+    """Domain part of a JID only (e.g. 'bot', 'call'); never the user part."""
+    return jid.rsplit("@", 1)[-1] if jid and "@" in jid else "(no @)"
+
+
+def probes(con, s: Schema, shared: dict[str, int]) -> dict:
+    """Targeted questions for the phase-2 design. Counts only."""
+    out: dict = {}
+    out["other_jid_suffixes"] = dict(Counter(
+        f"{_suffix(j)} (session type {t})" for j, t in con.execute(
+            "SELECT ZCONTACTJID, ZSESSIONTYPE FROM ZWACHATSESSION") if jid_kind(j) == "other"))
+    out["session_type_by_jid_kind"] = dict(Counter(
+        f"type {t}: {jid_kind(j)}" for j, t in con.execute("SELECT ZCONTACTJID, ZSESSIONTYPE FROM ZWACHATSESSION")))
+    out["messages_with_text_by_type"] = {type_name(t): n for t, n in con.execute(
+        "SELECT ZMESSAGETYPE, count(*) FROM ZWAMESSAGE WHERE ZTEXT IS NOT NULL AND ZTEXT != '' "
+        "AND ZMESSAGETYPE != 0 GROUP BY 1 ORDER BY 2 DESC")}
+    out["media_title_by_type"] = {type_name(t): n for t, n in con.execute(
+        "SELECT m.ZMESSAGETYPE, count(*) FROM ZWAMEDIAITEM mi JOIN ZWAMESSAGE m ON m.Z_PK = mi.ZMESSAGE "
+        "WHERE mi.ZTITLE IS NOT NULL AND mi.ZTITLE != '' GROUP BY 1 ORDER BY 2 DESC")}
+    if s.has("ZWAMESSAGE", "ZPARENTMESSAGE"):
+        out["parent_message_set_by_type"] = {type_name(t): n for t, n in con.execute(
+            "SELECT ZMESSAGETYPE, count(*) FROM ZWAMESSAGE WHERE ZPARENTMESSAGE IS NOT NULL GROUP BY 1")}
+    if s.has("ZWAMESSAGE", "ZMESSAGEINFO"):
+        out["messageinfo_link_by_type"] = {type_name(t): n for t, n in con.execute(
+            "SELECT ZMESSAGETYPE, count(*) FROM ZWAMESSAGE WHERE ZMESSAGEINFO IS NOT NULL GROUP BY 1 ORDER BY 2 DESC")}
+    for col in ("ZXMPPTHUMBPATH", "ZTHUMBNAILLOCALPATH"):
+        if s.has("ZWAMEDIAITEM", col):
+            c = Counter()
+            for (p,) in con.execute(f"SELECT {col} FROM ZWAMEDIAITEM WHERE {col} IS NOT NULL AND {col} != ''"):
+                c["set"] += 1
+                c["in_backup_Message/+path"] += (MEDIA_PREFIX + p) in shared
+                c["in_backup_as_is"] += p in shared
+            out[f"{col}_paths"] = dict(c)
+    referenced = {MEDIA_PREFIX + p for (p,) in con.execute(
+        "SELECT ZMEDIALOCALPATH FROM ZWAMEDIAITEM WHERE ZMEDIALOCALPATH IS NOT NULL")}
+    thumbs = set()
+    for col in ("ZXMPPTHUMBPATH", "ZTHUMBNAILLOCALPATH"):
+        if s.has("ZWAMEDIAITEM", col):
+            thumbs |= {MEDIA_PREFIX + p for (p,) in con.execute(f"SELECT {col} FROM ZWAMEDIAITEM WHERE {col} != ''")}
+    ext, first, sizes = Counter(), Counter(), Counter()
+    for p, sz in shared.items():
+        if not p.startswith(MEDIA_PREFIX) or p in referenced or p in thumbs:
+            continue
+        name = p.rsplit("/", 1)[-1]
+        ext[name.rsplit(".", 1)[-1].lower() if "." in name else "(none)"] += 1
+        first[p[len(MEDIA_PREFIX):].split("/", 1)[0]] += 1
+        sizes["<10KB" if sz < 10_240 else "<1MB" if sz < 1_048_576 else ">=1MB"] += 1
+    out["unreferenced_after_thumbnails"] = {"count": sum(ext.values()), "extensions": dict(ext.most_common(10)),
+                                             "first_component": dict(first.most_common(5)), "sizes": dict(sizes)}
+    if "ZWAMESSAGEDATAITEM" in s.cols:
+        out["ZWAMESSAGEDATAITEM_columns"] = sorted(s.cols["ZWAMESSAGEDATAITEM"])
+    return out
 
 
 def media_report(con, s: Schema, shared: dict[str, int]) -> dict:

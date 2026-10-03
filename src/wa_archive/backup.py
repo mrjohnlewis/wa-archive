@@ -148,8 +148,13 @@ class FinderBackup:
                                       output_filename=str(dest))
 
     def close(self) -> None:
-        with contextlib.suppress(Exception):
-            self._backup._cleanup()
+        backup = getattr(self, "_backup", None)
+        if backup is not None:
+            with contextlib.suppress(Exception):
+                backup._cleanup()
+            # Stop the library's __del__ from trying to delete the same folder again.
+            backup._temp_manifest_db_conn = None
+            backup._temporary_folder = None
         tempfile.tempdir = self._old_tempdir
 
 

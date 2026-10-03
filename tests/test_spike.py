@@ -99,3 +99,25 @@ def test_crosscheck_leaves_nothing_behind(source, tmp_path):
     tmp.mkdir()
     run_spike(source, tmp, free_bytes=0, do_crosscheck=True)
     assert not any(tmp.iterdir())
+
+
+def test_probes_present(report):
+    p = report["chatstorage"]["probes"]
+    assert p["media_title_by_type"] == {"8 document": 1}
+    assert p["unreferenced_after_thumbnails"]["count"] == 0
+
+
+def test_finder_backup_close_prevents_double_cleanup(tmp_path, capsys):
+    from iphone_backup_decrypt import EncryptedBackup
+    from wa_archive.backup import FinderBackup
+    eb = EncryptedBackup.__new__(EncryptedBackup)
+    folder = tmp_path / "manifest-tmp"
+    folder.mkdir()
+    eb._temp_manifest_db_conn, eb._temporary_folder = None, str(folder)
+    eb._temp_decrypted_manifest_db_path = str(folder / "Manifest.db")
+    fb = FinderBackup.__new__(FinderBackup)
+    fb._backup, fb._old_tempdir = eb, None
+    fb.close()
+    assert not folder.exists()
+    eb.__del__()  # what the garbage collector does later; must be a silent no-op
+    assert "Cleanup failed" not in capsys.readouterr().out
