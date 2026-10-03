@@ -8,8 +8,9 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "iphone-backup-decrypt>=0.11.2",
+    "iphone-backup-decrypt>=0.11.2,<0.12",
     "keyring>=25.7.0",
+    "pyobjc-framework-cocoa>=12.2.2 ; sys_platform == 'darwin'",
     "rich>=15.0.0",
 ]
 

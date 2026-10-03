@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import signal
 import sys
@@ -117,6 +118,156 @@ def cmd_not_yet(args) -> None:
     raise SystemExit(f"'{args.command}' arrives in a later phase.")
 
 
+def _caffeinate() -> None:
+    """Re-exec under `caffeinate -i` so the Mac doesn't idle-sleep during long uploads."""
+    if os.environ.get("WA_ARCHIVE_CAFFEINATED") or sys.platform != "darwin" or not shutil.which("caffeinate"):
+        return
+    env = dict(os.environ, WA_ARCHIVE_CAFFEINATED="1")
+    os.execvpe("caffeinate", ["caffeinate", "-i", sys.executable, "-m", "wa_archive", *sys.argv[1:]], env)
+
+
+def cmd_ingest(args) -> None:
+    from .cloud import Cloud
+    from .ingest import Options, run_ingest
+    from .store import ArchiveError
+
+    if not args.no_caffeinate and not args.dry_run:
+        _caffeinate()
+    paths = load_paths()
+    info = pick_backup(args.backup)
+    console.print(f"Backup [bold]{info.backup_id}[/] ({escape(info.product_type or '?')}, iOS "
+                  f"{escape(info.ios_version or '?')}, backed up {age(info.last_backup)})")
+    console.print(f"Archive: {escape(str(paths.archive_dir))}")
+    opts = Options(margin=int(args.margin_gb * 1024**3), upload_timeout=args.upload_timeout_hours * 3600,
+                   dry_run=args.dry_run)
+    t0 = time.time()
+    try:
+        stats = run_ingest(paths, lambda: open_source(info.path, private_dir(paths.tmp_dir), pw.get_password),
+                           Cloud(), options=opts, progress=lambda m: console.print(f"  {escape(m)}"))
+    except ArchiveError as e:
+        raise SystemExit(f"Stopped: {e}")
+    console.rule("ingest summary" + (" (dry run, nothing written)" if stats.get("dry_run") else ""))
+    for k, v in stats.items():
+        console.print(f"{k}: {_fmt(k, v)}")
+    console.print(f"took {time.time() - t0:.0f} s")
+    if not stats.get("dry_run"):
+        console.print("\nNext: [bold]wa-archive report[/] (use --wait-upload to wait for iCloud).")
+
+
+def cmd_report(args) -> None:
+    from .cloud import Cloud
+    from .store import ArchiveError, run_lock
+
+    paths = load_paths()
+    try:
+        with run_lock(paths):  # don't race a running ingest
+            rep = _build_report(args, paths, Cloud())
+    except ArchiveError as e:
+        raise SystemExit(f"Stopped: {e}")
+    if "error" in rep:
+        raise SystemExit(rep["error"])
+    from .report import save_report, status_label
+    render_report(rep, show_all=args.all, status_label=status_label)
+    if not args.quick:
+        md, _ = save_report(rep, paths)
+        console.print(f"\nSaved: {escape(str(md))} (+ .json)")
+
+
+def _build_report(args, paths, cloud) -> dict:
+    from rich.progress import Progress
+
+    from .report import build_report, wait_for_uploads
+    from .store import Store
+
+    if args.wait_upload:
+        store = Store(paths, cloud)
+        store.sync()
+        con = store.open()
+        try:
+            ok = wait_for_uploads(store, con, cloud, args.wait_upload * 3600, say=lambda m: console.print(escape(m)))
+        finally:
+            con.close()
+        if not ok:
+            console.print("[yellow]Uploads still pending after waiting; the report will show them.[/]")
+    with Progress(console=console, transient=True) as prog:
+        task = prog.add_task("Re-hashing archived media", total=None)
+        return build_report(paths, cloud, quick=args.quick, max_age_hours=args.max_age_hours,
+                            progress=lambda i, n: prog.update(task, completed=i, total=n))
+
+
+def cmd_evict(args) -> None:
+    from .cloud import Cloud
+    from .ingest import evict_uploaded
+    from .store import ArchiveError
+
+    try:
+        n, size = evict_uploaded(load_paths(), Cloud())
+    except ArchiveError as e:
+        raise SystemExit(f"Stopped: {e}")
+    console.print(f"Evicted {n:,} verified, uploaded media file(s) ({human(size)}) from this Mac. "
+                  "They stay in iCloud and download again on demand.")
+
+
+def render_report(rep: dict, show_all: bool, status_label) -> None:
+    from .report import human
+
+    age_h = rep["backup_age_hours"]
+    stale = age_h is None or age_h > 6
+    console.rule("[bold]WhatsApp archive report[/]")
+    console.print(f"[bold {'red' if stale else 'green'}]Backup taken {escape(str(rep['backup_date']))} "
+                  f"({age_h} h ago)[/]   run {escape(rep['run_id'])}")
+    console.print("Media received after this backup is NOT archived, and Manage Storage clears it anyway.")
+    for b in rep["blockers"]:
+        console.print(f"[bold red]BLOCKER:[/] {escape(b)}")
+    for w in rep["warnings"]:
+        console.print(f"[bold red]WARNING:[/] {escape(w)}")
+    t = rep["totals"]
+    console.print(f"\n{t['chats']} chats · {t['messages']:,} messages ({t['messages_new']:,} new) · "
+                  f"{t['media_present']:,} media archived ({t['media_new']:,} new) · {t['media_missing']:,} missing · "
+                  f"{human(t['archived_bytes'])} archived · {rep['blobs_rehashed']:,} files re-hashed")
+    if t["blob_problems"]:
+        console.print(f"[red]File problems:[/] {t['blob_problems']}")
+    table = Table(show_lines=False)
+    for col, j in (("Chat", "left"), ("Kind", "left"), ("Msgs", "right"), ("New", "right"), ("From", "left"),
+                   ("To", "left"), ("Media ok/miss/new", "right"), ("Archived", "right"), ("Status", "left")):
+        table.add_column(col, justify=j)
+    shown = [c for c in rep["chats"] if show_all or (not c["hidden"] and (c["media_present"] or c["media_missing"]
+                                                                          or c["messages_new"]))]
+    for c in shown:
+        label = status_label(c)
+        table.add_row(escape(c["name"]), c["kind"], f"{c['messages']:,}", f"{c['messages_new']:,}", c["first"],
+                      c["last"], f"{c['media_present']}/{c['media_missing']}/{c['media_new']}",
+                      human(c["archived_bytes"]), f"[{'green' if c['safe'] else 'red'}]{escape(label)}[/]")
+    console.print(table)
+    hidden = [c for c in rep["chats"] if c["hidden"]]
+    if hidden and not show_all:
+        console.print(f"(+ {len(hidden)} status/channel chats hidden: "
+                      f"{sum(c['safe'] for c in hidden)} safe; use --all to show)")
+    safe = [c for c in rep["chats"] if c["safe"] and c["media_in_latest_backup"]]
+    console.rule(f"[bold green]Safe to clear media ({len(safe)} chats)[/]")
+    for c in safe:
+        console.print(f"  ✓ {escape(c['name'])}" + ("" if status_label(c) == "safe" else f"  ({status_label(c)})"))
+    if not safe:
+        console.print("  (none yet)")
+
+
+def cmd_restore(args) -> None:
+    from .cloud import Cloud
+    from .store import ArchiveError, Store, run_lock
+
+    paths = load_paths()
+    try:
+        with run_lock(paths):
+            result = Store(paths, Cloud()).sync()
+    except ArchiveError as e:
+        raise SystemExit(f"Stopped: {e}")
+    console.print({"pulled": "Restored the local working copy from the archive (hash and integrity verified).",
+                   "in-sync": "Local working copy already matches the archive.",
+                   "new": "No archive found yet.",
+                   "needs-publish": "Local copy is newer than the archive; run `wa-archive ingest` to publish it."}
+                  [result])
+
+
 # ---------------------------------------------------------------- rendering
 
 def _fmt(key: str, v) -> str:
@@ -179,8 +330,29 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--forget", action="store_true")
     p.set_defaults(func=cmd_password)
 
-    for name in ("ingest", "report", "serve"):
-        sub.add_parser(name, help="(later phase)").set_defaults(func=cmd_not_yet)
+    p = sub.add_parser("ingest", help="merge the newest backup into the archive")
+    p.add_argument("--backup", help="backup id (prefix) or folder; default newest")
+    p.add_argument("--dry-run", action="store_true", help="read and plan only; write nothing")
+    p.add_argument("--margin-gb", type=float, default=2.0, help="disk space to always keep free (default 2)")
+    p.add_argument("--upload-timeout-hours", type=float, default=6.0)
+    p.add_argument("--no-caffeinate", action="store_true")
+    p.set_defaults(func=cmd_ingest)
+
+    p = sub.add_parser("report", help="per-chat verification and the safe-to-clear list")
+    p.add_argument("--quick", action="store_true", help="skip re-hashing (no safe list)")
+    p.add_argument("--wait-upload", type=float, metavar="HOURS", default=0,
+                   help="first wait up to HOURS for iCloud uploads to finish")
+    p.add_argument("--max-age-hours", type=float, default=6.0, help="warn if the backup is older than this")
+    p.add_argument("--all", action="store_true", help="include status/channel chats and chats without media")
+    p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("evict", help="free Mac disk: evict archived media that is verified and in iCloud")
+    p.set_defaults(func=cmd_evict)
+
+    p = sub.add_parser("restore", help="rebuild local state from the archive folder (e.g. on a new Mac)")
+    p.set_defaults(func=cmd_restore)
+
+    sub.add_parser("serve", help="(phase 3)").set_defaults(func=cmd_not_yet)
 
     # Turn SIGTERM / terminal close into a normal exit so `finally` blocks delete decrypted temp files.
     for sig in (signal.SIGTERM, signal.SIGHUP):

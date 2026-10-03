@@ -8,7 +8,6 @@ test fixtures. Nothing here ever writes inside a backup folder.
 from __future__ import annotations
 
 import contextlib
-import io
 import plistlib
 import shutil
 import sqlite3
@@ -125,6 +124,7 @@ class FinderBackup:
         # point that at our private temp folder for the duration.
         self._old_tempdir = tempfile.tempdir
         tempfile.tempdir = str(tmp_dir)
+        self._index: dict | None = None
         self._backup = EncryptedBackup(backup_directory=str(path), passphrase=password)
         try:
             self._backup.test_decryption()
@@ -132,20 +132,39 @@ class FinderBackup:
             self.close()
             raise SystemExit("Wrong backup password. If it came from Keychain, run: wa-archive password --forget")
 
-    def files(self, domain_like: str = WHATSAPP_DOMAIN_LIKE) -> Iterator[BackupFile]:
-        from iphone_backup_decrypt.utils import FilePlist
+    def _ensure_index(self) -> dict:
+        """One pass over WhatsApp's manifest rows; per-file lookups via the library would scan
+        the whole-phone Manifest.db (no usable index) once per file."""
+        if self._index is None:
+            from iphone_backup_decrypt.utils import FilePlist
 
-        with self._backup.manifest_db_cursor() as cur:
-            cur.execute("SELECT domain, relativePath, file FROM Files WHERE domain LIKE ? AND flags = 1",
-                        (domain_like,))
-            for domain, rel, blob in cur:
-                yield BackupFile(domain, rel, FilePlist(blob).filesize)
+            self._index = {}
+            with self._backup.manifest_db_cursor() as cur:
+                cur.execute("SELECT fileID, domain, relativePath, file FROM Files WHERE domain LIKE ? AND flags = 1",
+                            (WHATSAPP_DOMAIN_LIKE,))
+                for file_id, domain, rel, blob in cur:
+                    self._index[(domain, rel)] = (file_id, FilePlist(blob))
+        return self._index
+
+    def files(self, domain_like: str = WHATSAPP_DOMAIN_LIKE) -> Iterator[BackupFile]:
+        con = sqlite3.connect(":memory:")
+        for (domain, rel), (_, plist) in self._ensure_index().items():
+            if con.execute("SELECT ? LIKE ?", (domain, domain_like)).fetchone()[0]:
+                yield BackupFile(domain, rel, plist.filesize)
 
     def extract(self, domain: str, relative_path: str, dest: Path) -> None:
-        # The library prints size-mismatch notices to stdout; those name only our temp path.
-        with contextlib.redirect_stdout(io.StringIO()):
-            self._backup.extract_file(relative_path=relative_path, domain_like=domain,
-                                      output_filename=str(dest))
+        from iphone_backup_decrypt import utils
+
+        entry = self._ensure_index().get((domain, relative_path))
+        if entry is None:
+            raise FileNotFoundError("not in backup manifest")
+        file_id, plist = entry
+        if plist.encryption_key is None:  # empty file
+            dest.write_bytes(b"")
+            return
+        key = self._backup.keybag.unwrap_key_for_class(plist.protection_class, plist.encryption_key)
+        utils.aes_decrypt_chunked(in_filename=utils.backup_file_path(self._backup._backup_directory, file_id),
+                                  key=key, out_filepath=str(dest))
 
     def close(self) -> None:
         backup = getattr(self, "_backup", None)

@@ -38,8 +38,8 @@ def test_counts(report):
     assert m["missing_expected_bytes_total"] == 5_000_000
     assert m["path_match_style"] == {"Message/+path": 6}
     assert cs["quotes"] == {"quote_refs": 1, "resolved_full_id": 1, "resolved_17char_prefix": 1}
-    assert "1.1:jid" in cs["receipt_info_shapes"]["field_shapes"]
-    assert "1.2:emoji" in cs["receipt_info_shapes"]["field_shapes"]
+    assert "7.1.2:jid" in cs["receipt_info_shapes"]["field_shapes"]
+    assert "7.1.3:emoji" in cs["receipt_info_shapes"]["field_shapes"]
     assert report["contacts"]["ZWAADDRESSBOOKCONTACT.ZLID_non_null"] == 1
     assert report["calls"]["call_id_duplicates"] == 0
     assert report["disk"]["estimated_batches"] == 1
@@ -103,8 +103,9 @@ def test_crosscheck_leaves_nothing_behind(source, tmp_path):
 
 def test_probes_present(report):
     p = report["chatstorage"]["probes"]
-    assert p["media_title_by_type"] == {"8 document": 1}
-    assert p["unreferenced_after_thumbnails"]["count"] == 0
+    assert p["media_title_by_type"] == {"1 image": 1, "8 document": 1}
+    assert p["unreferenced_after_thumbnails"]["count"] == 1
+    assert p["ZXMPPTHUMBPATH_paths"] == {"set": 1, "in_backup_Message/+path": 1, "in_backup_as_is": 0}
 
 
 def test_finder_backup_close_prevents_double_cleanup(tmp_path, capsys):
@@ -121,3 +122,49 @@ def test_finder_backup_close_prevents_double_cleanup(tmp_path, capsys):
     assert not folder.exists()
     eb.__del__()  # what the garbage collector does later; must be a silent no-op
     assert "Cleanup failed" not in capsys.readouterr().out
+
+
+def test_finder_backup_extract_decrypts_via_manifest_index(tmp_path):
+    """FinderBackup.extract on a synthetic AES-CBC backup file (same format iOS uses)."""
+    import plistlib
+    import sqlite3
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from Crypto.Cipher import AES
+
+    from wa_archive.backup import SHARED_DOMAIN, FinderBackup
+
+    content = b"synthetic media bytes " * 100
+    key = bytes(range(32))
+    pad = 16 - len(content) % 16
+    enc = AES.new(key, AES.MODE_CBC, iv=b"\0" * 16).encrypt(content + bytes([pad]) * pad)
+    file_id = "ab" + "0" * 38
+    (tmp_path / "ab").mkdir()
+    (tmp_path / "ab" / file_id).write_bytes(enc)
+    plist = plistlib.dumps({"$archiver": "NSKeyedArchiver", "$version": 100000,
+                            "$top": {"root": plistlib.UID(1)},
+                            "$objects": ["$null", {"Size": len(content), "ProtectionClass": 3,
+                                                   "EncryptionKey": plistlib.UID(2)},
+                                         {"NS.data": b"\x03\0\0\0wrapped-key"}]}, fmt=plistlib.FMT_BINARY)
+    manifest = sqlite3.connect(":memory:")
+    manifest.execute("CREATE TABLE Files (fileID, domain, relativePath, flags, file)")
+    manifest.execute("INSERT INTO Files VALUES (?, ?, ?, 1, ?)", (file_id, SHARED_DOMAIN, "Message/Media/x.jpg", plist))
+
+    @contextmanager
+    def cursor():
+        yield manifest.cursor()
+
+    unwrapped = []
+    fb = FinderBackup.__new__(FinderBackup)
+    fb._index = None
+    fb._backup = SimpleNamespace(
+        manifest_db_cursor=cursor, _backup_directory=str(tmp_path),
+        keybag=SimpleNamespace(unwrap_key_for_class=lambda cls, wrapped: unwrapped.append((cls, wrapped)) or key))
+    assert [(f.relative_path, f.size) for f in fb.files(SHARED_DOMAIN)] == [("Message/Media/x.jpg", len(content))]
+    out = tmp_path / "out.bin"
+    fb.extract(SHARED_DOMAIN, "Message/Media/x.jpg", out)
+    assert out.read_bytes() == content
+    assert unwrapped == [(3, b"wrapped-key")]
+    with pytest.raises(FileNotFoundError):
+        fb.extract(SHARED_DOMAIN, "Message/Media/missing.jpg", out)

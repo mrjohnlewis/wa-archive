@@ -31,7 +31,8 @@ CREATE TABLE ZWAMESSAGE (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, ZCHATSESSION I
   ZGROUPEVENTTYPE INTEGER, ZMESSAGESTATUS INTEGER, ZSORT INTEGER, ZPARENTMESSAGE INTEGER);
 CREATE TABLE ZWAMEDIAITEM (Z_PK INTEGER PRIMARY KEY, ZMESSAGE INTEGER, ZMEDIALOCALPATH VARCHAR,
   ZTHUMBNAILLOCALPATH VARCHAR, ZFILESIZE INTEGER, ZMOVIEDURATION INTEGER, ZTITLE VARCHAR, ZMEDIAURL VARCHAR,
-  ZVCARDSTRING VARCHAR, ZVCARDNAME VARCHAR, ZMETADATA BLOB, ZMEDIAKEY BLOB, ZLATITUDE FLOAT, ZLONGITUDE FLOAT);
+  ZVCARDSTRING VARCHAR, ZVCARDNAME VARCHAR, ZMETADATA BLOB, ZMEDIAKEY BLOB, ZLATITUDE FLOAT, ZLONGITUDE FLOAT,
+  ZXMPPTHUMBPATH VARCHAR);
 CREATE TABLE ZWAMESSAGEINFO (Z_PK INTEGER PRIMARY KEY, ZMESSAGE INTEGER, ZRECEIPTINFO BLOB);
 CREATE TABLE ZWAPROFILEPUSHNAME (Z_PK INTEGER PRIMARY KEY, ZJID VARCHAR, ZPUSHNAME VARCHAR);
 CREATE TABLE ZWAVCARDMENTION (Z_PK INTEGER PRIMARY KEY, ZMEDIAITEM INTEGER, ZWHATSAPPID VARCHAR);
@@ -41,10 +42,11 @@ CREATE TABLE ZWAADDRESSBOOKCONTACT (Z_PK INTEGER PRIMARY KEY, ZFULLNAME VARCHAR,
   ZWHATSAPPID VARCHAR, ZPHONENUMBER VARCHAR, ZLID VARCHAR, ZABOUTTEXT VARCHAR);
 """
 CALLS_SCHEMA = """
-CREATE TABLE ZWAAGGREGATECALLEVENT (Z_PK INTEGER PRIMARY KEY, ZFIRSTDATE TIMESTAMP);
+CREATE TABLE ZWAAGGREGATECALLEVENT (Z_PK INTEGER PRIMARY KEY, ZFIRSTDATE TIMESTAMP, ZVIDEO INTEGER,
+  ZMISSED INTEGER, ZINCOMING INTEGER);
 CREATE TABLE ZWACDCALLEVENT (Z_PK INTEGER PRIMARY KEY, Z1CALLEVENTS INTEGER, ZCALLIDSTRING VARCHAR,
   ZGROUPCALLCREATORUSERJIDSTRING VARCHAR, ZGROUPJIDSTRING VARCHAR, ZDATE TIMESTAMP, ZOUTCOME INTEGER,
-  ZBYTESRECEIVED INTEGER, ZBYTESSENT INTEGER, ZDURATION FLOAT, ZVIDEO INTEGER, ZMISSED INTEGER, ZINCOMING INTEGER);
+  ZBYTESRECEIVED INTEGER, ZBYTESSENT INTEGER, ZDURATION FLOAT);
 CREATE TABLE ZWACDCALLEVENTPARTICIPANT (Z_PK INTEGER PRIMARY KEY, Z1PARTICIPANTS INTEGER, ZJIDSTRING VARCHAR,
   ZOUTCOME INTEGER);
 """
@@ -68,6 +70,17 @@ def pb_field(number: int, value: bytes | str | int) -> bytes:
     return pb_varint(number << 3 | 2) + pb_varint(len(value)) + value
 
 
+def reaction_blob(*reactions: tuple[str, str | None, str, int]) -> bytes:
+    """ZRECEIPTINFO with field 7: 7.1 = someone's reaction, 7.2 = mine (no JID)."""
+    inner = b""
+    for rid, jid, emoji, ts in reactions:
+        if jid:
+            inner += pb_field(1, pb_field(1, rid) + pb_field(2, jid) + pb_field(3, emoji) + pb_field(4, ts))
+        else:
+            inner += pb_field(2, pb_field(1, rid) + pb_field(2, emoji) + pb_field(3, ts))
+    return pb_field(2, pb_field(4, 1)) + pb_field(7, inner)
+
+
 def stanza(i: int, length: int = 20) -> str:
     return hashlib.sha1(f"stanza-{i}".encode()).hexdigest().upper()[:length]
 
@@ -79,6 +92,11 @@ class Media:
     size: int | None = None
     title: str | None = None
     metadata: bytes | None = None
+    thumb: bytes | None = None  # stored at <local_path>.thumb, referenced by ZXMPPTHUMBPATH
+
+    @property
+    def thumb_path(self) -> str | None:
+        return f"{self.local_path.rsplit('.', 1)[0]}.thumb" if self.local_path and self.thumb is not None else None
 
 
 @dataclass
@@ -104,6 +122,7 @@ class Fixture:
     messages: list[Msg] = field(default_factory=list)
     contacts: list[tuple[str, str, str | None]] = field(default_factory=list)  # (wa id, name, lid)
     calls: list[tuple[str, str, float]] = field(default_factory=list)  # (call id, jid, date)
+    extra_files: dict[str, bytes] = field(default_factory=dict)  # Message/-relative path -> content
     backup_date: datetime = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
     def write(self, root: Path) -> Path:
@@ -133,13 +152,16 @@ class Fixture:
                 media_pk += 1
                 mi = media_pk
                 md = m.media
-                size = md.size if md.size is not None else (len(md.content) if md.content else 1000)
-                con.execute("""INSERT INTO ZWAMEDIAITEM (Z_PK, ZMESSAGE, ZMEDIALOCALPATH, ZFILESIZE, ZTITLE, ZMETADATA)
-                               VALUES (?,?,?,?,?,?)""", (mi, m.pk, md.local_path, size, md.title, md.metadata))
+                size = md.size if md.size is not None else (len(md.content) if md.content else 0)
+                con.execute("""INSERT INTO ZWAMEDIAITEM (Z_PK, ZMESSAGE, ZMEDIALOCALPATH, ZFILESIZE, ZTITLE, ZMETADATA,
+                               ZXMPPTHUMBPATH) VALUES (?,?,?,?,?,?,?)""",
+                            (mi, m.pk, md.local_path, size, md.title, md.metadata, md.thumb_path))
                 if md.local_path and md.content is not None:
                     p = files / "Message" / md.local_path
                     p.parent.mkdir(parents=True, exist_ok=True)
                     p.write_bytes(md.content)
+                if md.thumb_path:
+                    (files / "Message" / md.thumb_path).write_bytes(md.thumb)
             con.execute("""INSERT INTO ZWAMESSAGE (Z_PK, ZCHATSESSION, ZISFROMME, ZMESSAGEDATE, ZTEXT, ZMESSAGETYPE,
                            ZGROUPMEMBER, ZSTANZAID, ZFROMJID, ZMEDIAITEM, ZFLAGS, ZGROUPEVENTTYPE)
                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -149,6 +171,10 @@ class Fixture:
                 con.execute("INSERT INTO ZWAMESSAGEINFO (ZMESSAGE, ZRECEIPTINFO) VALUES (?,?)", (m.pk, m.receipt))
         con.commit()
         con.close()
+        for rel, content in self.extra_files.items():
+            p = files / "Message" / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(content)
 
         con = sqlite3.connect(files / "ContactsV2.sqlite")
         con.executescript(CONTACTS_SCHEMA)
@@ -159,10 +185,10 @@ class Fixture:
 
         con = sqlite3.connect(files / "CallHistory.sqlite")
         con.executescript(CALLS_SCHEMA)
-        con.execute("INSERT INTO ZWAAGGREGATECALLEVENT (Z_PK) VALUES (1)")
+        con.execute("INSERT INTO ZWAAGGREGATECALLEVENT (Z_PK, ZVIDEO, ZINCOMING) VALUES (1, 0, 1)")
         for cid, jid, date in self.calls:
             con.execute("""INSERT INTO ZWACDCALLEVENT (Z1CALLEVENTS, ZCALLIDSTRING, ZGROUPCALLCREATORUSERJIDSTRING,
-                           ZDATE, ZDURATION, ZINCOMING) VALUES (1,?,?,?,60,1)""", (cid, jid, date))
+                           ZDATE, ZDURATION) VALUES (1,?,?,?,60)""", (cid, jid, date))
         con.commit()
         con.close()
         return root
@@ -171,7 +197,7 @@ class Fixture:
 # Values that must never appear in any output produced from this fixture.
 SECRETS = ["Contact-Alpha", "Contact-Bravo", "Group-Charlie", "Member-Delta", "64210000001", "88880000002",
            "120363000000001", "77770000003", "64210000009", "fixture-secret-text", "Fixture-Phone-Doc", "👍",
-           "img1.jpg", "voice1.opus"]
+           "img1.jpg", "voice1.opus", "❤️", "REACTIONID", "preview1"]
 
 
 def basic_fixture() -> Fixture:
@@ -201,7 +227,8 @@ def basic_fixture() -> Fixture:
     for i in range(10):
         add(1, f"fixture-secret-text {i}", from_me=i % 2)
     first = fx.messages[0]
-    add(1, None, type=1, media=Media(media_path(1, "img1.jpg"), b"\xff\xd8 image-one"))
+    add(1, None, type=1, media=Media(media_path(1, "img1.jpg"), b"\xff\xd8 image-one", thumb=b"thumb-one",
+                                     title="fixture-secret-text caption"))
     add(1, None, type=1, media=Media(media_path(1, "img2.jpg"), b"\xff\xd8 image-two"))
     add(1, None, type=2, media=Media(media_path(1, "vid1.mp4"), None, size=5_000_000))  # never downloaded
     add(1, None, type=3, media=Media(media_path(1, "voice1.opus"), b"OggS voice"))
@@ -209,7 +236,8 @@ def basic_fixture() -> Fixture:
     add(1, "fixture-secret-text reply", media=Media(None, None, metadata=pb_field(5, first.stanza)))
     add(1, None, type=14)  # deleted for everyone
     add(1, "fixture-secret-text reacted",
-        receipt=pb_field(1, pb_field(1, "64210000001@s.whatsapp.net") + pb_field(2, "👍")))
+        receipt=reaction_blob(("REACTIONID000000001", "64210000001@s.whatsapp.net", "👍", 1_778_000_000_000),
+                              ("REACTIONID000000002", None, "❤️", 1_778_000_100_000)))
     for i in range(5):
         add(2, f"fixture-secret-text lid {i}", from_me=i % 2)
     add(2, None, type=15, media=Media(media_path(2, "sticker.webp"), b"RIFF sticker"))
@@ -217,4 +245,5 @@ def basic_fixture() -> Fixture:
     for i in range(6):
         add(3, f"fixture-secret-text group {i}", member=1 + i % 2)
     add(3, None, type=1, member=1, media=Media(media_path(3, "gimg.jpg"), b"\xff\xd8 group image"))
+    fx.extra_files["Media/LinkPreviews/preview1.favicon"] = b"favicon bytes"
     return fx
