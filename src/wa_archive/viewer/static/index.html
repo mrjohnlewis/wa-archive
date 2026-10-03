@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WhatsApp Archive</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <header class="side-head">
+      <h1>WhatsApp Archive</h1>
+      <div id="archive-info" class="muted"></div>
+    </header>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search all chats" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="side-tools">
+      <label><input id="show-hidden" type="checkbox"> Status &amp; channels</label>
+      <button id="calls-btn" type="button">Calls</button>
+    </div>
+    <nav id="chat-list" aria-label="Chats"></nav>
+    <div id="search-results" hidden></div>
+  </aside>
+
+  <main id="main">
+    <header id="chat-head" hidden>
+      <button id="back" type="button" aria-label="Back to chats">‹</button>
+      <div class="titles">
+        <h2 id="chat-title"></h2>
+        <div id="chat-sub" class="muted"></div>
+      </div>
+      <label class="jump">Jump to <input id="jump-date" type="date"></label>
+      <input id="chat-search" type="search" placeholder="Search this chat" autocomplete="off">
+    </header>
+    <section id="messages" tabindex="0" aria-live="off"></section>
+    <section id="calls" hidden></section>
+    <div id="empty" class="empty">Choose a chat to start reading.</div>
+  </main>
+
+  <div id="lightbox" hidden><img alt=""></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

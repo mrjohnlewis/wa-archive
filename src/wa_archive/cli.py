@@ -114,10 +114,6 @@ def cmd_password(args) -> None:
                       else "No password saved; you'll be prompted each run.")
 
 
-def cmd_not_yet(args) -> None:
-    raise SystemExit(f"'{args.command}' arrives in a later phase.")
-
-
 def _caffeinate() -> None:
     """Re-exec under `caffeinate -i` so the Mac doesn't idle-sleep during long uploads."""
     if os.environ.get("WA_ARCHIVE_CAFFEINATED") or sys.platform != "darwin" or not shutil.which("caffeinate"):
@@ -255,6 +251,41 @@ def render_report(rep: dict, show_all: bool, status_label) -> None:
         console.print("  (none yet)")
 
 
+def cmd_serve(args) -> None:
+    import secrets
+    import socket
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from .cloud import Cloud
+    from .store import ArchiveError, Store, run_lock
+    from .viewer.app import create_app
+
+    paths = load_paths()
+    cloud = Cloud()
+    try:
+        with run_lock(paths):
+            if Store(paths, cloud).sync() == "new":
+                raise SystemExit("No archive yet. Run `wa-archive ingest` first.")
+    except ArchiveError as e:
+        raise SystemExit(f"Stopped: {e}")
+    port = args.port
+    if not port:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+    token = secrets.token_urlsafe(24)
+    app = create_app(paths, cloud, token=token, port=port)
+    url = f"http://127.0.0.1:{port}/?t={token}"
+    console.print(f"Viewer running (this Mac only). Open:\n  [bold]{url}[/]\nPress Ctrl-C to stop.")
+    if not args.no_browser:
+        threading.Timer(1.0, webbrowser.open, [url]).start()
+    # access_log off: URLs carry search terms, which must not end up in logs.
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
+
+
 def cmd_restore(args) -> None:
     from .cloud import Cloud
     from .store import ArchiveError, Store, run_lock
@@ -356,7 +387,10 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("restore", help="rebuild local state from the archive folder (e.g. on a new Mac)")
     p.set_defaults(func=cmd_restore)
 
-    sub.add_parser("serve", help="(phase 3)").set_defaults(func=cmd_not_yet)
+    p = sub.add_parser("serve", help="browse the archive in your web browser (this Mac only)")
+    p.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free port)")
+    p.add_argument("--no-browser", action="store_true", help="just print the link")
+    p.set_defaults(func=cmd_serve)
 
     # Turn SIGTERM / terminal close into a normal exit so `finally` blocks delete decrypted temp files.
     for sig in (signal.SIGTERM, signal.SIGHUP):

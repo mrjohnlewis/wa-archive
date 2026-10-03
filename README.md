@@ -4,8 +4,6 @@ A personal tool that archives WhatsApp history from encrypted iPhone backups
 (made with Finder) into a master archive in iCloud Drive. The archive only grows.
 That lets you clear WhatsApp media on the phone without losing anything.
 
-> Status: **phase 2 (ingest + report)**. The `serve` viewer arrives in phase 3.
-
 ## Setup
 
 ```sh
@@ -59,6 +57,30 @@ names, numbers or file names. A copy of that output is saved under
 6. Optionally delete old Finder backups (Finder → Manage Backups). wa-archive never deletes anything.
 
 `uv run wa-archive evict` frees Mac disk immediately. It evicts archived media that's verified and uploaded; the files stay in iCloud.
+
+## Browsing the archive
+
+```sh
+uv run wa-archive serve
+```
+
+This opens the archive in your browser at a private `http://127.0.0.1:<port>/?t=<secret>` link. The viewer:
+- only answers on this Mac;
+- works only through that link, which is new on every launch;
+- never changes the archive.
+
+Features:
+- chats sorted by latest activity, with WhatsApp-style bubbles;
+- photos, videos, GIFs, stickers, voice notes and documents shown inline;
+- replies, reactions, the "edited" label with version history, and "deleted for everyone" messages kept and flagged;
+- jump to a date, search across all chats or within one, and a call log;
+- status updates and channels hidden by default (tick the box to show them).
+
+Media that iCloud has evicted downloads on demand, so you'll see a short pause.
+Restart `serve` after an ingest to see new chats and names. Press Ctrl-C to stop.
+
+Voice notes are Opus audio. Chrome plays them; if your browser can't, the
+viewer offers a download link instead.
 
 ## Where things live
 
