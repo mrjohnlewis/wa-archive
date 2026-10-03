@@ -82,6 +82,27 @@ Restart `serve` after an ingest to see new chats and names. Press Ctrl-C to stop
 Voice notes are Opus audio. Chrome plays them; if your browser can't, the
 viewer offers a download link instead.
 
+## Settings
+
+```sh
+uv run wa-archive config                                  # show the archive and backup folders, and where each value comes from
+uv run wa-archive config set archive-dir "~/Library/Mobile Documents/com~apple~CloudDocs/Family/WhatsApp Archive"
+uv run wa-archive config unset archive-dir                # back to the default
+```
+
+Settings are saved in `~/Library/Application Support/wa-archive/config.toml`.
+`backup-root` can be set the same way. Environment variables (`WA_ARCHIVE_DIR`,
+`WA_ARCHIVE_BACKUP_ROOT`) override saved settings.
+
+**Changing `archive-dir` never moves your archive.** To relocate it:
+1. Move the whole `WhatsApp Archive` folder in Finder and let iCloud finish syncing.
+2. Then run `config set`.
+
+`config set` refuses to point at an empty folder while an archive exists at the
+current location. If the configured folder is missing an archive this Mac has
+already published, every command stops with an explanation rather than
+quietly starting a new archive.
+
 ## Where things live
 
 | What | Where | Synced |

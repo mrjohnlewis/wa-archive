@@ -257,6 +257,11 @@ class Store:
         if pub is None:
             if self.archive_db.exists():
                 raise ArchiveError("archive.sqlite exists without archive.json; refusing to guess. Check the folder.")
+            if local:  # generation > 0: this archive has been published before, so it should be here
+                raise ArchiveError(
+                    f"No archive found at {self.paths.archive_dir}, but this Mac has already published one. "
+                    "If you moved the archive folder, run `wa-archive config set archive-dir <new location>`; "
+                    "if iCloud is still syncing it, wait and try again.")
             # A local DB with no runs is just an empty schema (e.g. left by --dry-run): nothing to publish.
             return "needs-publish" if local is not None and self._local_has_runs() else "new"
         if local is None or local < pub.generation:

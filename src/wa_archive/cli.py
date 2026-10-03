@@ -286,6 +286,59 @@ def cmd_serve(args) -> None:
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
 
 
+CONFIG_KEYS = {"archive-dir": "archive_dir", "backup-root": "backup_root"}
+
+
+def cmd_config(args) -> None:
+    from .config import SETTINGS, config_file, load_settings, resolve, save_settings
+
+    if args.action == "show":
+        console.print(f"Settings file: {escape(str(config_file()))}")
+        for name, key in CONFIG_KEYS.items():
+            value, source = resolve(key)
+            note = {"env": f" (from ${SETTINGS[key][0]}, overrides the settings file)",
+                    "config": " (saved setting)", "default": " (default)"}[source]
+            console.print(f"  {name}: {escape(str(value))}{note}")
+        return
+    key = CONFIG_KEYS[args.key]
+    settings = load_settings()
+    if args.action == "unset":
+        settings.pop(key, None)
+        save_settings(settings)
+        console.print(f"{args.key} reset to the default: {escape(str(resolve(key)[0]))}")
+        return
+    new = Path(args.value).expanduser().resolve()
+    if key == "archive_dir":
+        _check_archive_move(resolve(key)[0], new, args.force)
+    elif not new.is_dir():
+        raise SystemExit(f"{new} is not a folder.")
+    settings[key] = str(new)
+    save_settings(settings)
+    console.print(f"Saved: {args.key} = {escape(str(new))}")
+    if resolve(key)[1] == "env":
+        console.print(f"[yellow]Note: ${SETTINGS[key][0]} is set in this shell and still overrides the setting.[/]")
+
+
+def _check_archive_move(old: Path, new: Path, force: bool) -> None:
+    """The setting never moves data; refuse a change that would orphan the existing archive."""
+    old_has, new_has = (old / "archive.json").exists(), (new / "archive.json").exists()
+    if new == old.resolve():
+        return
+    if new_has:
+        console.print(f"Found an existing archive at {escape(str(new))}.")
+    elif old_has and not force:
+        raise SystemExit(
+            f"Your archive is at {old}, and the new location has no archive.\n"
+            "Changing this setting doesn't move anything. To move the archive:\n"
+            f"  1. In Finder, move the whole 'WhatsApp Archive' folder to {new.parent}"
+            " (let iCloud finish syncing),\n"
+            "  2. then run this command again.\n"
+            "(--force starts a brand-new, separate archive at the new location instead.)")
+    if "Mobile Documents/com~apple~CloudDocs" not in str(new):
+        console.print("[yellow]Warning: this folder isn't in iCloud Drive. `report` will then never mark chats "
+                      "safe to clear, because the archive would have no off-Mac copy.[/]")
+
+
 def cmd_restore(args) -> None:
     from .cloud import Cloud
     from .store import ArchiveError, Store, run_lock
@@ -383,6 +436,17 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("evict", help="free Mac disk: evict archived media that is verified and in iCloud")
     p.set_defaults(func=cmd_evict)
+
+    p = sub.add_parser("config", help="show or change saved settings (archive location, backup folder)")
+    csub = p.add_subparsers(dest="action")
+    csub.add_parser("show", help="show effective settings (default)")
+    c = csub.add_parser("set", help="save a setting")
+    c.add_argument("key", choices=list(CONFIG_KEYS))
+    c.add_argument("value")
+    c.add_argument("--force", action="store_true", help="allow pointing at a new, empty archive location")
+    c = csub.add_parser("unset", help="go back to the default")
+    c.add_argument("key", choices=list(CONFIG_KEYS))
+    p.set_defaults(func=cmd_config, action="show")
 
     p = sub.add_parser("restore", help="rebuild local state from the archive folder (e.g. on a new Mac)")
     p.set_defaults(func=cmd_restore)
