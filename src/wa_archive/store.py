@@ -229,6 +229,15 @@ class Store:
         finally:
             con.close()
 
+    def _local_has_runs(self) -> bool:
+        con = sqlite3.connect(f"file:{self.work_db}?mode=ro", uri=True)
+        try:
+            return con.execute("SELECT count(*) FROM runs").fetchone()[0] > 0
+        except sqlite3.Error:
+            return False
+        finally:
+            con.close()
+
     # ---------------------------------------------------------- published copy
 
     def published(self) -> Published | None:
@@ -248,7 +257,8 @@ class Store:
         if pub is None:
             if self.archive_db.exists():
                 raise ArchiveError("archive.sqlite exists without archive.json; refusing to guess. Check the folder.")
-            return "new" if local is None else "needs-publish"
+            # A local DB with no runs is just an empty schema (e.g. left by --dry-run): nothing to publish.
+            return "needs-publish" if local is not None and self._local_has_runs() else "new"
         if local is None or local < pub.generation:
             self.pull(pub)
             return "pulled"

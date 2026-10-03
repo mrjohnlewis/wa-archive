@@ -394,6 +394,16 @@ def test_dry_run_writes_nothing(env):
     assert not (env.paths.archive_dir / "media").exists()
 
 
+def test_dry_run_then_real_run_publishes_once(env):
+    fx = basic_fixture()
+    ingest(env, fx, options=Options(dry_run=True))
+    assert Store(env.paths, env.cloud).sync() == "new"
+    ingest(env, fx, same_backup=True)
+    pub = json.loads((env.paths.archive_dir / "archive.json").read_text())
+    assert pub["generation"] == 1
+    assert not (env.paths.archive_dir / "snapshots").exists()
+
+
 def test_concurrent_runs_are_refused(env):
     with run_lock(env.paths):
         with pytest.raises(ArchiveError, match="in progress"):
