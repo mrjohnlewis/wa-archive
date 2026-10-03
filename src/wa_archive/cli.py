@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import signal
 import sys
 import time
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from rich.table import Table
 
 from . import password as pw
 from .backup import BackupInfo, dir_size, list_backups, open_source, read_info
-from .config import load_paths, private_dir
+from .config import load_paths, private_dir, sweep_tmp
 from .privacy import setup_logging
 
 console = Console(emoji=False, highlight=False)
@@ -81,6 +82,8 @@ def cmd_spike(args) -> None:
     paths = load_paths()
     info = pick_backup(args.backup)
     tmp = private_dir(paths.tmp_dir)
+    if n := sweep_tmp(tmp):
+        console.print(f"Removed {n} leftover temp item(s) from an interrupted earlier run.")
     console.print(f"Backup [bold]{info.backup_id}[/] ({info.product_type}, iOS {info.ios_version}, "
                   f"backed up {age(info.last_backup)})")
     timings = {}
@@ -178,6 +181,10 @@ def main(argv: list[str] | None = None) -> None:
 
     for name in ("ingest", "report", "serve"):
         sub.add_parser(name, help="(later phase)").set_defaults(func=cmd_not_yet)
+
+    # Turn SIGTERM / terminal close into a normal exit so `finally` blocks delete decrypted temp files.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda signum, frame: sys.exit(128 + signum))
 
     args = ap.parse_args(argv)
     setup_logging(args.debug)

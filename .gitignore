@@ -7,3 +7,14 @@ __pycache__/
 *.sqlite-wal
 *.sqlite-shm
 spike-*.json
+# wa-archive / wtsexporter outputs, in case anything is ever run from the repo
+spike/
+tmp/
+work/
+result/
+wtsexporter*
+wtsexpoter-debug-*.log
+WhatsApp/
+AppDomainGroup-*/
+*.vcf
+*.db

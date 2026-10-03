@@ -83,3 +83,19 @@ def test_crosscheck_with_wtsexporter(source, tmp_path):
     assert "error" not in cc, cc
     assert cc["chats_common"] == 3
     assert cc["messages_ours"] == 32
+
+
+def test_sweep_tmp_removes_leftovers(tmp_path):
+    from wa_archive.config import sweep_tmp
+    (tmp_path / "spike-old").mkdir()
+    (tmp_path / "spike-old" / "ChatStorage.sqlite").write_bytes(b"x")
+    (tmp_path / "stray.json").write_text("{}")
+    assert sweep_tmp(tmp_path) == 2 and not any(tmp_path.iterdir())
+
+
+def test_crosscheck_leaves_nothing_behind(source, tmp_path):
+    pytest.importorskip("Whatsapp_Chat_Exporter")
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    run_spike(source, tmp, free_bytes=0, do_crosscheck=True)
+    assert not any(tmp.iterdir())

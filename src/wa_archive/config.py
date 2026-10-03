@@ -8,6 +8,7 @@ environment variables, which the tests use to stay inside a temp dir.
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,3 +46,18 @@ def private_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path, 0o700)
     return path
+
+
+def sweep_tmp(tmp: Path) -> int:
+    """Delete leftovers in our private temp dir (e.g. decrypted DBs from a killed run).
+
+    Only ever called on wa-archive's own tmp dir, never on a backup or the archive.
+    """
+    n = 0
+    for p in tmp.iterdir():
+        if p.is_dir() and not p.is_symlink():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+        n += 1
+    return n
