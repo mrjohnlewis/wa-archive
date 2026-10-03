@@ -14,6 +14,8 @@ import re
 from contextlib import contextmanager
 import secrets
 import sqlite3
+import threading
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,11 +84,41 @@ def fts_query(q: str) -> str | None:
 class Archive:
     """Read-only queries against the local working copy of the archive DB."""
 
-    def __init__(self, paths: Paths, cloud):
+    def __init__(self, paths: Paths, cloud, refresh_interval: float = 2.0):
         self.db_path = paths.work_dir / "archive.sqlite"
         self.blobs = BlobStore(paths.archive_dir)
         self.cloud = cloud
+        self.refresh_interval = refresh_interval
+        self._lock = threading.Lock()
+        self._checked = 0.0
+        self.loaded_version = self.version()["version"]
         self.refresh()
+
+    def version(self) -> dict:
+        """Changes whenever an ingest publishes a batch (generation) or starts/finishes a run."""
+        with self.con() as con:
+            gen = con.execute("SELECT value FROM meta WHERE key = 'generation'").fetchone()
+            run = con.execute("SELECT run_id, status, batches_done, backup_date FROM runs "
+                              "ORDER BY rowid DESC LIMIT 1").fetchone()
+            messages = con.execute("SELECT count(*) FROM messages").fetchone()[0]
+        token = f"{gen[0] if gen else 0}:{run['run_id'] if run else ''}:{run['status'] if run else ''}:" \
+                f"{run['batches_done'] if run else 0}:{messages}"
+        return {"version": token, "messages": messages, "ingest_running": bool(run and run["status"] == "running"),
+                "backup_date": run["backup_date"] if run else None}
+
+    def maybe_refresh(self) -> None:
+        """Reload cached names/chats if an ingest has changed the archive (checked at most every few seconds)."""
+        now = time.monotonic()
+        if now - self._checked < self.refresh_interval:
+            return
+        with self._lock:
+            if now - self._checked < self.refresh_interval:
+                return
+            self._checked = now
+            v = self.version()["version"]
+            if v != self.loaded_version:
+                self.refresh()
+                self.loaded_version = v
 
     @contextmanager
     def con(self):
@@ -418,17 +450,21 @@ def _cursor(v: str | None) -> tuple | None:
     return float(ts), int(rid)
 
 
-def create_app(paths: Paths, cloud, *, token: str, port: int, download_timeout: float = 25) -> Starlette:
-    archive = Archive(paths, cloud)
+def create_app(paths: Paths, cloud, *, token: str, port: int, download_timeout: float = 25,
+               refresh_interval: float = 2.0) -> Starlette:
+    archive = Archive(paths, cloud, refresh_interval)
 
     def chats(request: Request):
+        archive.maybe_refresh()
         return JSONResponse(archive.chats(request.query_params.get("hidden") == "1"))
 
     def chat(request: Request):
+        archive.maybe_refresh()
         info = archive.chat_info(int(request.path_params["cid"]))
         return JSONResponse(info) if info else JSONResponse({"error": "no such chat"}, status_code=404)
 
     def messages(request: Request):
+        archive.maybe_refresh()
         qp = request.query_params
         try:
             around_ts = float(qp["around_ts"]) if qp.get("around_ts") else None
@@ -443,13 +479,18 @@ def create_app(paths: Paths, cloud, *, token: str, port: int, download_timeout: 
         return JSONResponse(archive.versions(request.path_params["key"]))
 
     def search(request: Request):
+        archive.maybe_refresh()
         qp = request.query_params
         chat_id = int(qp["chat"]) if qp.get("chat") else None
         return JSONResponse(archive.search(qp.get("q", ""), chat_id, int(qp.get("limit", 50)),
                                            int(qp.get("offset", 0))))
 
     def calls(request: Request):
+        archive.maybe_refresh()
         return JSONResponse(archive.calls())
+
+    def version(request: Request):
+        return JSONResponse(archive.version(), headers={"Cache-Control": "no-store"})
 
     def blob(request: Request):
         path = archive.blob_path(request.path_params["sha"])
@@ -482,6 +523,7 @@ def create_app(paths: Paths, cloud, *, token: str, port: int, download_timeout: 
     routes = [
         Route("/", index),
         Route("/api/info", info),
+        Route("/api/version", version),
         Route("/api/chats", chats),
         Route("/api/chats/{cid:int}", chat),
         Route("/api/chats/{cid:int}/messages", messages),

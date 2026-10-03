@@ -4,7 +4,8 @@
 const $ = (s) => document.querySelector(s);
 const PAGE = 80;
 const MAX_DOM = 600;          // messages kept in the DOM; far side is trimmed while scrolling
-const EDGE = 800;             // px from top/bottom that triggers loading more
+const EDGE = 800;
+const POLL_MS = 10000;        // how often to check whether an ingest changed the archive             // px from top/bottom that triggers loading more
 const GROUPISH = new Set(["group", "community", "status", "status_thread"]);
 const MEDIA_LABEL = { image: "📷 Photo", video: "🎥 Video", gif: "GIF", audio: "🎤 Voice message", sticker: "Sticker", document: "📄 Document" };
 const canOpus = document.createElement("audio").canPlayType('audio/ogg; codecs="opus"') !== "";
@@ -269,6 +270,7 @@ async function openChat(id, opts = {}) {
   box.replaceChildren(...page.messages.map(renderMessage));
   fixSeparators();
   const target = page.target && box.querySelector(`[data-key="${CSS.escape(page.target)}"]`);
+  $("#new-msgs").hidden = true;
   state.stick = !(target && (opts.aroundKey || opts.aroundTs));
   if (state.stick) keepAtBottom();
   else highlight(target);
@@ -344,6 +346,7 @@ function onScroll() {
   // state.loading prevents overlapping fetches.
   const box = $("#messages");
   if (box.scrollHeight - box.scrollTop - box.clientHeight > 40) state.stick = false;  // user scrolled up
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < 40 && !state.hasNewer) $("#new-msgs").hidden = true;
   if (box.scrollTop < EDGE) loadOlder();
   else if (box.scrollHeight - box.scrollTop - box.clientHeight < EDGE) loadNewer();
 }
@@ -410,6 +413,45 @@ function openLightbox(src) {
   lb.hidden = false;
 }
 
+// ------------------------------------------------------------------ live updates
+const live = { version: null, messages: null, toastTimer: null };
+
+function toast(text) {
+  const t = $("#toast");
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(live.toastTimer);
+  live.toastTimer = setTimeout(() => (t.hidden = true), 6000);
+}
+
+async function pollVersion() {
+  if (document.hidden && live.version !== null) return;  // background tab: catch up when it becomes visible
+  let v;
+  try { v = await api("/api/version"); } catch (_) { return; }  // server stopped or restarting
+  if (live.version === null) { Object.assign(live, { version: v.version, messages: v.messages }); return; }
+  if (v.version === live.version) return;
+  const added = v.messages - live.messages;
+  Object.assign(live, { version: v.version, messages: v.messages });
+  const before = state.chat && state.chats.find((c) => c.id === state.chat.id);
+  await loadChats();
+  if (v.backup_date) $("#archive-info").textContent = `Latest backup ${fmtDay(Date.parse(v.backup_date) / 1000)}`;
+  toast(v.ingest_running ? `Ingest in progress · ${added.toLocaleString()} new messages so far`
+                         : `Archive updated · ${added.toLocaleString()} new messages`);
+  if (!state.chat || $("#messages").hidden) return;
+  const now = state.chats.find((c) => c.id === state.chat.id);
+  if (!now || (before && now.last_ts === before.last_ts && now.count === before.count)) return;
+  Object.assign(state.chat, now);
+  $("#chat-sub").textContent = `${now.count.toLocaleString()} messages · ${fmtDate(now.first_ts)} – ${fmtDate(now.last_ts)}`;
+  if (state.stick) {
+    state.hasNewer = true;
+    await loadNewer();
+    keepAtBottom();
+  } else {
+    state.hasNewer = true;  // the next scroll to the bottom fetches them
+    $("#new-msgs").hidden = false;
+  }
+}
+
 // ------------------------------------------------------------------ boot
 async function boot() {
   $("#messages").addEventListener("scroll", onScroll, { passive: true });
@@ -417,6 +459,9 @@ async function boot() {
   $("#calls-btn").addEventListener("click", showCalls);
   $("#back").addEventListener("click", () => document.body.classList.remove("chat-open"));
   $("#lightbox").addEventListener("click", () => ($("#lightbox").hidden = true));
+  $("#new-msgs").addEventListener("click", () => { $("#new-msgs").hidden = true; openChat(state.chat.id); });
+  setInterval(pollVersion, POLL_MS);
+  document.addEventListener("visibilitychange", pollVersion);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#lightbox").hidden = true; });
   const search = debounce((e) => runSearch(e.target.value, null), 300);
   $("#search").addEventListener("input", search);
@@ -432,6 +477,7 @@ async function boot() {
     if (info.backup_date) $("#archive-info").textContent = `Latest backup ${fmtDay(Date.parse(info.backup_date) / 1000)}`;
   } catch (_) { /* informational only */ }
   await loadChats();
+  await pollVersion();  // records the starting version
   const m = location.hash.match(/chat=(\d+)/);
   if (m) openChat(Number(m[1]));
 }

@@ -146,3 +146,13 @@ button, input { font: inherit; color: inherit; }
   #chat-search, #chat-head .jump { display: none; }
   #messages { padding: 8px 8px 20px; }
 }
+
+#new-msgs {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 5;
+  border: 0; border-radius: 16px; padding: 6px 14px; background: var(--accent); color: #fff; cursor: pointer;
+  box-shadow: 0 2px 6px #0000004d;
+}
+#toast {
+  position: absolute; top: 64px; right: 16px; z-index: 6; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 13px; box-shadow: 0 2px 8px #00000040;
+}

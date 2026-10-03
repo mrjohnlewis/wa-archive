@@ -242,3 +242,53 @@ def test_50k_message_chat_is_fast(env):
     assert around["target"] == mid_key and res["results"]
     assert worst < 0.25, worst
     assert dt_jump < 0.25 and dt_search < 0.5 and dt_chats < 0.5, (dt_jump, dt_search, dt_chats)
+
+
+# ------------------------------------------------------------------ live updates
+
+def test_viewer_picks_up_a_new_ingest_without_restart(env):
+    fx = basic_fixture()
+    ingest(env, fx)
+    app = create_app(env.paths, env.cloud, token="tok", port=PORT, refresh_interval=0)
+    c = TestClient(app, base_url=BASE)
+    c.get("/?t=tok")
+    v1 = c.get("/api/version").json()
+    alpha = chat_id(c, "Contact-Alpha")
+    before = c.get(f"/api/chats/{alpha}/messages?limit=200").json()["messages"]
+
+    fx2 = copy.deepcopy(fx)
+    t = max(m.date for m in fx.messages)
+    fx2.messages.append(Msg(900, 1, 0, t + 60, "fixture-secret-text brand new", 0, stanza(900),
+                            None, fx.chats[1][0]))
+    fx2.chats[9] = ("64210000555@s.whatsapp.net", "Contact-Newcomer", 0)
+    fx2.messages.append(Msg(901, 9, 0, t + 120, "fixture-secret-text hello", 0, stanza(901),
+                            None, "64210000555@s.whatsapp.net"))
+    ingest(env, fx2)  # while the viewer app is still running
+
+    v2 = c.get("/api/version").json()
+    assert v2["version"] != v1["version"] and v2["messages"] == v1["messages"] + 2
+    assert not v2["ingest_running"]
+    chats = c.get("/api/chats").json()
+    assert chats[0]["name"] == "Contact-Newcomer"  # new chat, named, sorted first
+    last = before[-1]
+    newer = c.get(f"/api/chats/{alpha}/messages?after={last['ts']}:{last['rid']}").json()["messages"]
+    assert [m["text"] for m in newer] == ["fixture-secret-text brand new"]
+    assert c.get("/api/search?q=brand").json()["results"]
+
+
+def test_version_reports_running_ingest(env):
+    from wa_archive.cloud import CloudState
+    from wa_archive.ingest import Options, UploadTimeout
+
+    from .test_ingest import _tiny_disk
+    env.cloud.default = CloudState.PENDING
+    fx = basic_fixture()
+    with pytest.raises(UploadTimeout):  # stops between batches, run left 'running'
+        ingest(env, fx, free_space=_tiny_disk(env, fx, room=30), options=Options(margin=0, upload_timeout=0))
+    c = client_for(env)
+    assert c.get("/api/version").json()["ingest_running"] is True
+
+
+def test_frontend_polls_for_updates():
+    js = (Path(__file__).parents[1] / "src/wa_archive/viewer/static/app.js").read_text()
+    assert "/api/version" in js and "setInterval(pollVersion" in js

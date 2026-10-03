@@ -77,7 +77,7 @@ Features:
 - status updates and channels hidden by default (tick the box to show them).
 
 Media that iCloud has evicted downloads on demand, so you'll see a short pause.
-Restart `serve` after an ingest to see new chats and names. Press Ctrl-C to stop.
+The viewer updates itself when an ingest runs, including mid-ingest after each batch. Within about 10 seconds the chat list refreshes and a notice shows how many messages arrived. New messages are added to the open chat if you're at the bottom; otherwise a **New messages ↓** button appears. Press Ctrl-C to stop.
 
 Voice notes are Opus audio. Chrome plays them; if your browser can't, the
 viewer offers a download link instead.
