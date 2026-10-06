@@ -82,11 +82,18 @@ def read_info(path: Path) -> BackupInfo:
     )
 
 
+FULL_DISK_ACCESS_HELP = ("macOS blocked access to the iPhone backup folder. Give your Terminal app Full Disk Access "
+                         "(System Settings → Privacy & Security → Full Disk Access), then restart the Terminal.")
+
+
 def list_backups(root: Path) -> list[BackupInfo]:
-    if not root.is_dir():
-        return []
-    found = [read_info(p) for p in root.iterdir()
-             if p.is_dir() and (p / "Manifest.plist").exists()]
+    try:
+        if not root.is_dir():
+            return []
+        found = [read_info(p) for p in root.iterdir()
+                 if p.is_dir() and (p / "Manifest.plist").exists()]
+    except PermissionError:
+        raise SystemExit(FULL_DISK_ACCESS_HELP)
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     return sorted(found, key=lambda b: b.last_backup or epoch, reverse=True)
 

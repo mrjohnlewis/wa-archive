@@ -168,3 +168,24 @@ def test_finder_backup_extract_decrypts_via_manifest_index(tmp_path):
     assert unwrapped == [(3, b"wrapped-key")]
     with pytest.raises(FileNotFoundError):
         fb.extract(SHARED_DOMAIN, "Message/Media/missing.jpg", out)
+
+
+def test_backups_without_full_disk_access_explains_fix(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from wa_archive.backup import FULL_DISK_ACCESS_HELP
+
+    def denied(self):
+        raise PermissionError(1, "Operation not permitted")
+    monkeypatch.setattr(Path, "iterdir", denied)
+    (tmp_path / "root").mkdir()
+    with pytest.raises(SystemExit, match="Full Disk Access") as e:
+        list_backups(tmp_path / "root")
+    assert str(e.value) == FULL_DISK_ACCESS_HELP
+
+
+def test_check_command_alias():
+    from wa_archive import cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["check", "--help"])
+    assert e.value.code == 0

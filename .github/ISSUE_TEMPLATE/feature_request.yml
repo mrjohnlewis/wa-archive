@@ -1,0 +1,12 @@
+name: Idea or request
+description: Suggest an improvement
+body:
+  - type: markdown
+    attributes:
+      value: This is a best-effort personal project, so ideas are welcome but may not be picked up.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like, and why?
+    validations:
+      required: true

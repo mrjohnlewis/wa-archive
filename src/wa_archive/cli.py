@@ -407,7 +407,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-size", action="store_true", help="skip computing backup sizes")
     p.set_defaults(func=cmd_backups)
 
-    p = sub.add_parser("spike", help="phase-1 check: counts and structure only")
+    p = sub.add_parser("check", aliases=["spike"],
+                       help="compatibility check for bug reports: counts and structure only")
     p.add_argument("--backup", help="backup id (prefix) or folder; default newest")
     p.add_argument("--crosscheck", action="store_true", help="compare counts with wtsexporter")
     p.set_defaults(func=cmd_spike)

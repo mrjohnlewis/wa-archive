@@ -1,0 +1,37 @@
+name: Bug report
+description: Something went wrong or looks incorrect
+body:
+  - type: markdown
+    attributes:
+      value: |
+        🔒 **Please don't post private content.** No message text, chat or contact names, phone numbers,
+        or screenshots of chats. They belong to you *and* the people you talk to.
+        The output of `uv run wa-archive check` contains counts and structure only, so it's safe to share.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you ran, what you expected, and what you saw instead. Include the exact error message.
+    validations:
+      required: true
+  - type: textarea
+    id: check-output
+    attributes:
+      label: Output of `uv run wa-archive check`
+      description: Counts and structure only. Look through it before pasting.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: macOS, iOS on the phone, WhatsApp version (from `wa-archive backups`), and the wa-archive commit or version.
+      placeholder: macOS 26.6, iOS 27.0, WhatsApp 26.38.74, wa-archive 0.1.0
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I've checked that this issue contains no message text, names, phone numbers or chat screenshots.
+          required: true
