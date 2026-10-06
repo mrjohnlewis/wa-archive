@@ -113,6 +113,13 @@ class ArchiveError(RuntimeError):
     pass
 
 
+def check_schema(version, where: str) -> None:
+    """Never let an older wa-archive write to an archive created by a newer one."""
+    if version is not None and int(version) > SCHEMA_VERSION:
+        raise ArchiveError(f"The {where} was written by a newer version of wa-archive (archive format {version}; "
+                           f"this version understands up to {SCHEMA_VERSION}). Upgrade wa-archive and try again.")
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -199,6 +206,13 @@ class Store:
         private_dir(self.paths.work_dir)
         con = sqlite3.connect(self.work_db, isolation_level=None)  # explicit BEGIN/COMMIT
         con.row_factory = sqlite3.Row
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").fetchone():
+            row = con.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+            try:
+                check_schema(row[0] if row else None, "local working copy")
+            except ArchiveError:
+                con.close()
+                raise
         con.execute("PRAGMA journal_mode = WAL")
         con.execute("PRAGMA synchronous = FULL")
         con.executescript(SCHEMA + TRIGGERS)
@@ -245,6 +259,7 @@ class Store:
             return None
         self.cloud.ensure_local(self.archive_json)
         d = json.loads(self.archive_json.read_text())
+        check_schema(d.get("schema_version"), "archive in the archive folder")
         return Published(int(d["generation"]), d["sha256"], int(d["size"]), d.get("run_id"))
 
     def sync(self) -> str:

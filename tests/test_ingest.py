@@ -546,3 +546,21 @@ def test_wait_for_uploads_rechecks_only_pending(env):
     assert msgs == ["Waiting for iCloud: 1 of 1 file(s) still uploading..."]
     first_pass = one(con, "SELECT count(*) FROM blobs") + 2
     assert len(checks) - n_files == first_pass + 1  # one full pass, then only the pending file
+
+
+def test_older_tool_refuses_newer_archive_format(env):
+    ingest(env, basic_fixture())
+    p = env.paths.archive_dir / "archive.json"
+    d = json.loads(p.read_text())
+    d["schema_version"] = 99
+    p.write_text(json.dumps(d))
+    with pytest.raises(ArchiveError, match="newer version of wa-archive"):
+        Store(env.paths, env.cloud).sync()
+    d["schema_version"] = 1
+    p.write_text(json.dumps(d))
+    con = db(env)
+    con.execute("UPDATE meta SET value = '99' WHERE key = 'schema_version'")
+    con.commit()
+    con.close()
+    with pytest.raises(ArchiveError, match="local working copy"):
+        Store(env.paths, env.cloud).open()

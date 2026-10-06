@@ -1,10 +1,21 @@
 [project]
 name = "wa-archive"
 version = "0.1.0"
-description = "Incremental, never-forgetting WhatsApp archive from encrypted iPhone backups"
+description = "Archive WhatsApp chats and media from encrypted iPhone backups into iCloud Drive, so you can safely clear media from your phone"
 readme = "README.md"
 authors = [
     { name = "John Lewis" }
+]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["whatsapp", "iphone", "ios", "backup", "archive", "icloud"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Archiving :: Backup",
 ]
 requires-python = ">=3.13"
 dependencies = [
