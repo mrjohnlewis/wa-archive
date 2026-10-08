@@ -1,18 +1,35 @@
 # wa-archive
 
-**Free up WhatsApp space on your iPhone without losing a single photo, video or message.**
+**Keep your entire WhatsApp history in a private archive you can browse in your web browser, and free up space on your iPhone without losing a single photo, video or message.**
 
-`wa-archive` reads the encrypted iPhone backup that Finder makes on your Mac and
-copies your WhatsApp history into an archive in your iCloud Drive. That
-history covers chats, photos, videos, voice notes, documents, reactions and
-calls. The archive only ever grows. Run it again a few months later and it
-adds what's new, while keeping everything it already had, including media you
-have since cleared from the phone.
+`wa-archive` copies your WhatsApp chats, photos, videos, voice notes and
+documents from the encrypted iPhone backup Finder makes on your Mac. It stores
+them in an archive in your iCloud Drive and gives you a viewer that looks and
+feels like WhatsApp itself:
 
-Before you delete anything, `wa-archive report` tells you, chat by chat, which
-ones are **safe to clear**. A chat is listed only when every media file in it is
-archived, hash-verified and uploaded to iCloud. A local viewer then lets you
-browse and search the whole archive in your browser.
+- **Read any conversation**, as far back as it goes, with the chat bubbles,
+  replies and reactions you're used to.
+- **See your media inline:** photos, videos, GIFs, stickers and voice notes,
+  even ones you've since cleared from your phone.
+- **Jump to any date,** or **search every chat at once** to find that message
+  from years ago.
+
+No command-line digging, no folders of exported files. It runs entirely on your
+Mac and is only reachable from your own browser.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/viewer-dark.png">
+  <img alt="The wa-archive viewer in a browser: a chat list on the left and a family group chat with photos, captions, reactions, a quoted reply and a voice note (fictional sample data)" src="docs/viewer-light.png">
+</picture>
+
+<sub>Screenshot uses fictional sample data.</sub>
+
+**Free up space, safely.** The archive only ever grows. Run it every few months
+and it adds what's new, while keeping everything it already had, including
+media you've since cleared from your phone. Before you delete anything,
+`wa-archive report` tells you which chats are **safe to clear**. A chat appears
+there only when every media file in it is archived, hash-verified and uploaded
+to iCloud.
 
 > **Status:** early release (0.x). Built for one family's archive and shared
 > as-is in case it helps others. Support is best effort; see [Support](#support).
