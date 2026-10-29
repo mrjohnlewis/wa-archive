@@ -18,3 +18,10 @@ WhatsApp/
 AppDomainGroup-*/
 *.vcf
 *.db
+
+# OS noise, secrets, build output
+.DS_Store
+.env
+.env.*
+!.env.example
+dist/
