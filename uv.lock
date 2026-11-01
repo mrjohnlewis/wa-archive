@@ -631,14 +631,14 @@ wheels = [
 
 [[package]]
 name = "whatsapp-chat-exporter"
-version = "0.13.0"
+version = "0.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bleach" },
     { name = "jinja2" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/11/94/7439bf18250550f36b5445f0895af378c014cc88875ee3744b7e4d13680f/whatsapp_chat_exporter-0.13.0.tar.gz", hash = "sha256:0da1cd22601e7b75805f793cb650be5b4b59c9083991045cba705149dd572b04", size = 77135, upload-time = "2026-01-24T10:36:07.808Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/d9/e00e5b08b2e4a8c6d9c45b820797db98817e5b748faefa193f87311a8343/whatsapp_chat_exporter-0.13.1.tar.gz", hash = "sha256:a1d480aef7e2ac6e6456aafd6d9254c406bad6f8790f738d6830a3ce4d0552bf", size = 77396, upload-time = "2026-10-11T17:16:18.904Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/91/d6e6337bd8c9dc9e3eb21bf460ed0315d44f077b686b6a8e2b8f8c2e2b19/whatsapp_chat_exporter-0.13.0-py3-none-any.whl", hash = "sha256:bf1395eccf5af65d04e5133537f1ec77e42e9350617029495209d71ac1ecf1cd", size = 68978, upload-time = "2026-01-24T10:36:06.298Z" },
+    { url = "https://files.pythonhosted.org/packages/56/08/64707b95b2462d36efa7d0887e871125bec7fe3fcb9ed4c62c6a3fee3bb1/whatsapp_chat_exporter-0.13.1-py3-none-any.whl", hash = "sha256:73e7ef3a8fc95d9b413bb818b9fa57344ffeda150589507c916029dfe440de7f", size = 69185, upload-time = "2026-10-11T17:16:17.45Z" },
 ]
